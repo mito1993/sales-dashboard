@@ -72,11 +72,16 @@ def load_and_process_data(sheet_name: str) -> pd.DataFrame:
     sh = gc.open(sheet_name)
     worksheet = sh.get_worksheet(0)
     
-    # --- ▼▼▼ データ読み込み範囲を修正 ▼▼▼ ---
-    # 指定された範囲 'A1:AB10500' を明示的に読み込む
-    data = worksheet.get('A1:AB10500')
-    # 1行目をヘッダーとしてDataFrameを作成
-    df = pd.DataFrame(data[1:], columns=data[0])
+    # --- ▼▼▼ データ読み込み方法を修正 ▼▼▼ ---
+    # get_all_records()を使い、ヘッダーを自動認識して全レコードを読み込む
+    # この方法は空行を無視する上でより堅牢です
+    data = worksheet.get_all_records()
+    df = pd.DataFrame(data)
+
+    # 管理No.が空の行は無効なデータとして削除する
+    # これにより、完全に空の行や意図しない行が処理されるのを防ぐ
+    if '管理No.' in df.columns:
+        df = df[df['管理No.'].astype(str).str.strip() != ''].copy()
     # --- ▲▲▲ ここまで ▲▲▲ ---
 
     # --- データ処理 ---
@@ -88,6 +93,8 @@ def load_and_process_data(sheet_name: str) -> pd.DataFrame:
     currency_columns = ['売上（税抜）', '粗利（税抜）']
     for col in currency_columns:
         if col in df.columns:
+            # 空白や空文字列をNoneに置換してから記号を削除
+            df[col] = df[col].replace(r'^\s*$', None, regex=True)
             df[col] = df[col].astype(str).str.replace('[¥,]', '', regex=True)
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
@@ -105,6 +112,10 @@ try:
     # 商流フィルター
     shoryu_options = df["商流"].dropna().unique().tolist()
     selected_shoryu = st.sidebar.multiselect("商流を選択", shoryu_options, default=shoryu_options)
+
+    # 案件フェーズフィルター
+    phase_options = df["案件フェーズ"].dropna().unique().tolist()
+    selected_phase = st.sidebar.multiselect("案件フェーズを選択", phase_options, default=phase_options)
 
     # 営業担当フィルター
     sales_options = [
@@ -125,16 +136,19 @@ try:
     sales_col_1 = '担当者' 
     sales_col_2 = '営業担当' 
 
+    # 共通のフィルター条件を作成
+    base_filter = (
+        (df["商流"].isin(selected_shoryu)) &
+        (df["案件フェーズ"].isin(selected_phase)) &
+        (df[sales_col_1].isin(selected_sales) | df[sales_col_2].isin(selected_sales))
+    )
+
     # グラフ描画
     # 1. 受注月ごとの売上・粗利推移（棒グラフ）
     st.subheader(f"{selected_period} 受注月ごとの売上・粗利推移")
     
     # 受注ベースでフィルタリング
-    df_order_filtered = df[
-        (df["商流"].isin(selected_shoryu)) &
-        (df[sales_col_1].isin(selected_sales) | df[sales_col_2].isin(selected_sales)) &
-        (df["受注期"] == selected_period)
-    ]
+    df_order_filtered = df[base_filter & (df["受注期"] == selected_period)]
 
     if not df_order_filtered.empty:
         df_order_grouped = df_order_filtered.set_index('受注月').groupby(pd.Grouper(freq='M'))[['売上（税抜）', '粗利（税抜）']].sum().reset_index()
@@ -150,9 +164,10 @@ try:
             xaxis_title="受注月",
             yaxis_title="合計金額",
             title_font_size=22,
-            xaxis_tickformat='%Y-%m',  # X軸のフォーマットを「年-月」に
-            yaxis_tickformat=',.0f'    # Y軸をカンマ区切りの整数に
+            xaxis_tickformat='%Y-%m',
+            yaxis_tickformat=',.0f'
         )
+        fig_order.update_yaxes(rangemode="tozero") # Y軸の最小値を0に固定
         st.plotly_chart(fig_order, use_container_width=True)
     else:
         st.info(f"{selected_period}の受注データはありません。")
@@ -162,11 +177,7 @@ try:
     st.subheader(f"{selected_period} 納品月ごとの売上・粗利推移")
 
     # 納品ベースでフィルタリング
-    df_delivery_filtered = df[
-        (df["商流"].isin(selected_shoryu)) &
-        (df[sales_col_1].isin(selected_sales) | df[sales_col_2].isin(selected_sales)) &
-        (df["納品期"] == selected_period)
-    ]
+    df_delivery_filtered = df[base_filter & (df["納品期"] == selected_period)]
 
     if not df_delivery_filtered.empty:
         df_delivery_grouped = df_delivery_filtered.set_index('納品月').groupby(pd.Grouper(freq='M'))[['売上（税抜）', '粗利（税抜）']].sum().reset_index()
@@ -182,9 +193,10 @@ try:
             xaxis_title="納品月",
             yaxis_title="合計金額",
             title_font_size=22,
-            xaxis_tickformat='%Y-%m',  # X軸のフォーマットを「年-月」に
-            yaxis_tickformat=',.0f'    # Y軸をカンマ区切りの整数に
+            xaxis_tickformat='%Y-%m',
+            yaxis_tickformat=',.0f'
         )
+        fig_delivery.update_yaxes(rangemode="tozero") # Y軸の最小値を0に固定
         st.plotly_chart(fig_delivery, use_container_width=True)
     else:
         st.info(f"{selected_period}の納品データはありません。")
