@@ -76,8 +76,8 @@ def load_and_process_data(sheet_name: str) -> pd.DataFrame:
 
     # --- ▼▼▼ データ処理を修正 ▼▼▼ ---
     # 日付列をdatetime型に変換
-    df["受注日"] = pd.to_datetime(df["受注日"], errors="coerce")
-    df["納品日"] = pd.to_datetime(df["納品日"], errors="coerce")
+    df["受注月"] = pd.to_datetime(df["受注月"], errors="coerce")
+    df["納品月"] = pd.to_datetime(df["納品月"], errors="coerce")
 
     # 金額と粗利を数値に変換
     df["金額"] = pd.to_numeric(df["金額"], errors='coerce').fillna(0)
@@ -85,8 +85,8 @@ def load_and_process_data(sheet_name: str) -> pd.DataFrame:
     df["粗利"] = pd.to_numeric(df["粗利"], errors='coerce').fillna(0)
 
     # 受注期と納品期をそれぞれ動的に生成
-    df["受注期"] = df["受注日"].apply(get_fiscal_period)
-    df["納品期"] = df["納品日"].apply(get_fiscal_period)
+    df["受注期"] = df["受注月"].apply(get_fiscal_period)
+    df["納品期"] = df["納品月"].apply(get_fiscal_period)
     return df
     # --- ▲▲▲ ここまで ▲▲▲ ---
 
@@ -133,11 +133,11 @@ try:
     ]
 
     if not df_order_filtered.empty:
-        df_order_grouped = df_order_filtered.set_index('受注日').groupby(pd.Grouper(freq='M'))[['金額', '粗利']].sum().reset_index()
-        df_order_melted = df_order_grouped.melt(id_vars='受注日', value_vars=['金額', '粗利'], var_name='指標', value_name='合計値')
+        df_order_grouped = df_order_filtered.set_index('受注月').groupby(pd.Grouper(freq='M'))[['金額', '粗利']].sum().reset_index()
+        df_order_melted = df_order_grouped.melt(id_vars='受注月', value_vars=['金額', '粗利'], var_name='指標', value_name='合計値')
         
         fig_order = px.bar(
-            df_order_melted, x='受注日', y='合計値', color='指標',
+            df_order_melted, x='受注月', y='合計値', color='指標',
             barmode='group', title="受注ベース 売上・粗利",
             template="plotly_white", color_discrete_map={'金額': '#3b82f6', '粗利': '#2dd4bf'}
         )
@@ -158,11 +158,11 @@ try:
     ]
 
     if not df_delivery_filtered.empty:
-        df_delivery_grouped = df_delivery_filtered.set_index('納品日').groupby(pd.Grouper(freq='M'))[['金額', '粗利']].sum().reset_index()
-        df_delivery_melted = df_delivery_grouped.melt(id_vars='納品日', value_vars=['金額', '粗利'], var_name='指標', value_name='合計値')
+        df_delivery_grouped = df_delivery_filtered.set_index('納品月').groupby(pd.Grouper(freq='M'))[['金額', '粗利']].sum().reset_index()
+        df_delivery_melted = df_delivery_grouped.melt(id_vars='納品月', value_vars=['金額', '粗利'], var_name='指標', value_name='合計値')
 
         fig_delivery = px.line(
-            df_delivery_melted, x='納品日', y='合計値', color='指標',
+            df_delivery_melted, x='納品月', y='合計値', color='指標',
             title="納品ベース 売上・粗利", markers=True,
             template="plotly_white", color_discrete_map={'金額': '#636EFA', '粗利': '#f472b6'}
         )
