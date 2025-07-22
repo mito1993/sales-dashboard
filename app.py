@@ -71,16 +71,20 @@ def load_and_process_data(sheet_name: str) -> pd.DataFrame:
     gc = gspread.service_account_from_dict(creds)
     sh = gc.open(sheet_name)
     worksheet = sh.get_worksheet(0)
-    data = worksheet.get_all_records()
-    df = pd.DataFrame(data)
+    
+    # --- ▼▼▼ データ読み込み範囲を修正 ▼▼▼ ---
+    # 指定された範囲 'A1:AB10500' を明示的に読み込む
+    data = worksheet.get('A1:AB10500')
+    # 1行目をヘッダーとしてDataFrameを作成
+    df = pd.DataFrame(data[1:], columns=data[0])
+    # --- ▲▲▲ ここまで ▲▲▲ ---
 
-    # --- ▼▼▼ データ処理を修正 ▼▼▼ ---
+    # --- データ処理 ---
     # 日付列をdatetime型に変換
     df["受注月"] = pd.to_datetime(df["受注月"], errors="coerce")
     df["納品月"] = pd.to_datetime(df["納品月"], errors="coerce")
 
     # 金額と粗利を数値に変換
-    # '¥'と','を取り除いてから数値に変換する
     currency_columns = ['売上（税抜）', '粗利（税抜）']
     for col in currency_columns:
         if col in df.columns:
@@ -91,14 +95,13 @@ def load_and_process_data(sheet_name: str) -> pd.DataFrame:
     df["受注期"] = df["受注月"].apply(get_fiscal_period)
     df["納品期"] = df["納品月"].apply(get_fiscal_period)
     return df
-    # --- ▲▲▲ ここまで ▲▲▲ ---
 
 try:
     df = load_and_process_data('営業成績データ')
 
     st.sidebar.header("フィルター")
 
-    # --- ▼▼▼ フィルター部分を修正 ▼▼▼ ---
+    # --- フィルター部分 ---
     # 商流フィルター
     shoryu_options = df["商流"].dropna().unique().tolist()
     selected_shoryu = st.sidebar.multiselect("商流を選択", shoryu_options, default=shoryu_options)
@@ -110,7 +113,7 @@ try:
     ]
     selected_sales = st.sidebar.multiselect("担当営業を選択", sales_options, default=sales_options)
     
-    # 営業期フィルター (受注期と納品期の両方から選択肢を生成)
+    # 営業期フィルター (データに存在する期を自動で全て表示します)
     order_periods = df["受注期"].dropna().unique()
     delivery_periods = df["納品期"].dropna().unique()
     all_periods = sorted(list(set(order_periods) | set(delivery_periods)))
@@ -121,7 +124,6 @@ try:
     # --- 担当営業の列名を指定 ---
     sales_col_1 = '担当者' 
     sales_col_2 = '営業担当' 
-    # --- ▲▲▲ ここまで ▲▲▲ ---
 
     # グラフ描画
     # 1. 受注月ごとの売上・粗利推移（棒グラフ）
@@ -143,7 +145,14 @@ try:
             barmode='group', title="受注ベース 売上・粗利",
             template="plotly_white", color_discrete_map={'売上（税抜）': '#3b82f6', '粗利（税抜）': '#2dd4bf'}
         )
-        fig_order.update_layout(xaxis_title="受注月", yaxis_title="合計", title_font_size=22)
+        # --- グラフUI修正 ---
+        fig_order.update_layout(
+            xaxis_title="受注月",
+            yaxis_title="合計金額",
+            title_font_size=22,
+            xaxis_tickformat='%Y-%m',  # X軸のフォーマットを「年-月」に
+            yaxis_tickformat=',.0f'    # Y軸をカンマ区切りの整数に
+        )
         st.plotly_chart(fig_order, use_container_width=True)
     else:
         st.info(f"{selected_period}の受注データはありません。")
@@ -168,7 +177,14 @@ try:
             title="納品ベース 売上・粗利", markers=True,
             template="plotly_white", color_discrete_map={'売上（税抜）': '#636EFA', '粗利（税抜）': '#f472b6'}
         )
-        fig_delivery.update_layout(xaxis_title="納品月", yaxis_title="合計", title_font_size=22)
+        # --- グラフUI修正 ---
+        fig_delivery.update_layout(
+            xaxis_title="納品月",
+            yaxis_title="合計金額",
+            title_font_size=22,
+            xaxis_tickformat='%Y-%m',  # X軸のフォーマットを「年-月」に
+            yaxis_tickformat=',.0f'    # Y軸をカンマ区切りの整数に
+        )
         st.plotly_chart(fig_delivery, use_container_width=True)
     else:
         st.info(f"{selected_period}の納品データはありません。")
