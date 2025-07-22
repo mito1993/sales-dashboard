@@ -2,6 +2,7 @@ import streamlit as st
 import gspread
 import pandas as pd
 import plotly.express as px
+from dateutil.relativedelta import relativedelta
 
 # カスタムCSS（変更なし）
 st.markdown(
@@ -72,33 +73,23 @@ def load_and_process_data(sheet_name: str) -> pd.DataFrame:
     sh = gc.open(sheet_name)
     worksheet = sh.get_worksheet(0)
     
-    # --- ▼▼▼ データ読み込み方法を修正 ▼▼▼ ---
-    # get_all_records()を使い、ヘッダーを自動認識して全レコードを読み込む
-    # この方法は空行を無視する上でより堅牢です
     data = worksheet.get_all_records()
     df = pd.DataFrame(data)
 
-    # 管理No.が空の行は無効なデータとして削除する
-    # これにより、完全に空の行や意図しない行が処理されるのを防ぐ
     if '管理No.' in df.columns:
         df = df[df['管理No.'].astype(str).str.strip() != ''].copy()
-    # --- ▲▲▲ ここまで ▲▲▲ ---
 
     # --- データ処理 ---
-    # 日付列をdatetime型に変換
     df["受注月"] = pd.to_datetime(df["受注月"], errors="coerce")
     df["納品月"] = pd.to_datetime(df["納品月"], errors="coerce")
 
-    # 金額と粗利を数値に変換
     currency_columns = ['売上（税抜）', '粗利（税抜）']
     for col in currency_columns:
         if col in df.columns:
-            # 空白や空文字列をNoneに置換してから記号を削除
             df[col] = df[col].replace(r'^\s*$', None, regex=True)
             df[col] = df[col].astype(str).str.replace('[¥,]', '', regex=True)
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-    # 受注期と納品期をそれぞれ動的に生成
     df["受注期"] = df["受注月"].apply(get_fiscal_period)
     df["納品期"] = df["納品月"].apply(get_fiscal_period)
     return df
@@ -109,22 +100,18 @@ try:
     st.sidebar.header("フィルター")
 
     # --- フィルター部分 ---
-    # 商流フィルター
     shoryu_options = df["商流"].dropna().unique().tolist()
     selected_shoryu = st.sidebar.multiselect("商流を選択", shoryu_options, default=shoryu_options)
 
-    # 案件フェーズフィルター
     phase_options = df["案件フェーズ"].dropna().unique().tolist()
     selected_phase = st.sidebar.multiselect("案件フェーズを選択", phase_options, default=phase_options)
 
-    # 営業担当フィルター
     sales_options = [
         "相川直輝", "佐々木亮", "高橋和大", "衛本楓河",
         "野沢響", "室伏夕", "湯浅華", "佐々木信", "韓国"
     ]
     selected_sales = st.sidebar.multiselect("担当営業を選択", sales_options, default=sales_options)
     
-    # 営業期フィルター (データに存在する期を自動で全て表示します)
     order_periods = df["受注期"].dropna().unique()
     delivery_periods = df["納品期"].dropna().unique()
     all_periods = sorted(list(set(order_periods) | set(delivery_periods)))
@@ -132,42 +119,55 @@ try:
     latest_period_index = len(all_periods) - 1 if all_periods else 0
     selected_period = st.sidebar.selectbox("営業期を選択", all_periods, index=latest_period_index)
     
-    # --- 担当営業の列名を指定 ---
     sales_col_1 = '担当者' 
     sales_col_2 = '営業担当' 
 
-    # 共通のフィルター条件を作成
     base_filter = (
         (df["商流"].isin(selected_shoryu)) &
         (df["案件フェーズ"].isin(selected_phase)) &
         (df[sales_col_1].isin(selected_sales) | df[sales_col_2].isin(selected_sales))
     )
 
+    # --- ▼▼▼ グラフ生成ロジックを修正 ▼▼▼ ---
+    def create_full_period_df(period_str):
+        """ '第X期' からその期の12ヶ月分のDataFrameを作成する """
+        if not isinstance(period_str, str) or "第" not in period_str:
+            return None
+        period_num = int(period_str.replace('第','').replace('期',''))
+        start_year = 2022 + period_num
+        start_date = pd.Timestamp(year=start_year, month=4, day=1)
+        # 12ヶ月分の月を生成
+        months = [start_date + relativedelta(months=i) for i in range(12)]
+        return pd.DataFrame({'月': months})
+
     # グラフ描画
     # 1. 受注月ごとの売上・粗利推移（棒グラフ）
     st.subheader(f"{selected_period} 受注月ごとの売上・粗利推移")
     
-    # 受注ベースでフィルタリング
     df_order_filtered = df[base_filter & (df["受注期"] == selected_period)]
 
-    if not df_order_filtered.empty:
+    # 選択された期の12ヶ月分の空のDataFrameを作成
+    full_period_order_df = create_full_period_df(selected_period)
+    
+    if full_period_order_df is not None and not df_order_filtered.empty:
         df_order_grouped = df_order_filtered.set_index('受注月').groupby(pd.Grouper(freq='M'))[['売上（税抜）', '粗利（税抜）']].sum().reset_index()
-        df_order_melted = df_order_grouped.melt(id_vars='受注月', value_vars=['売上（税抜）', '粗利（税抜）'], var_name='指標', value_name='合計値')
+        df_order_grouped.rename(columns={'受注月': '月'}, inplace=True)
+        
+        # 12ヶ月分のデータと実績データを結合
+        merged_df_order = pd.merge(full_period_order_df, df_order_grouped, on='月', how='left').fillna(0)
+        
+        df_order_melted = merged_df_order.melt(id_vars='月', value_vars=['売上（税抜）', '粗利（税抜）'], var_name='指標', value_name='合計値')
         
         fig_order = px.bar(
-            df_order_melted, x='受注月', y='合計値', color='指標',
+            df_order_melted, x='月', y='合計値', color='指標',
             barmode='group', title="受注ベース 売上・粗利",
             template="plotly_white", color_discrete_map={'売上（税抜）': '#3b82f6', '粗利（税抜）': '#2dd4bf'}
         )
-        # --- グラフUI修正 ---
         fig_order.update_layout(
-            xaxis_title="受注月",
-            yaxis_title="合計金額",
-            title_font_size=22,
-            xaxis_tickformat='%Y-%m',
-            yaxis_tickformat=',.0f'
+            xaxis_title="受注月", yaxis_title="合計金額", title_font_size=22,
+            xaxis_tickformat='%Y-%m', yaxis_tickformat=',.0f'
         )
-        fig_order.update_yaxes(rangemode="tozero") # Y軸の最小値を0に固定
+        fig_order.update_yaxes(rangemode="tozero")
         st.plotly_chart(fig_order, use_container_width=True)
     else:
         st.info(f"{selected_period}の受注データはありません。")
@@ -176,31 +176,31 @@ try:
     # 2. 納品月ごとの売上・粗利推移（折れ線グラフ）
     st.subheader(f"{selected_period} 納品月ごとの売上・粗利推移")
 
-    # 納品ベースでフィルタリング
     df_delivery_filtered = df[base_filter & (df["納品期"] == selected_period)]
+    
+    full_period_delivery_df = create_full_period_df(selected_period)
 
-    if not df_delivery_filtered.empty:
+    if full_period_delivery_df is not None and not df_delivery_filtered.empty:
         df_delivery_grouped = df_delivery_filtered.set_index('納品月').groupby(pd.Grouper(freq='M'))[['売上（税抜）', '粗利（税抜）']].sum().reset_index()
-        df_delivery_melted = df_delivery_grouped.melt(id_vars='納品月', value_vars=['売上（税抜）', '粗利（税抜）'], var_name='指標', value_name='合計値')
+        df_delivery_grouped.rename(columns={'納品月': '月'}, inplace=True)
+
+        merged_df_delivery = pd.merge(full_period_delivery_df, df_delivery_grouped, on='月', how='left').fillna(0)
+        
+        df_delivery_melted = merged_df_delivery.melt(id_vars='月', value_vars=['売上（税抜）', '粗利（税抜）'], var_name='指標', value_name='合計値')
 
         fig_delivery = px.line(
-            df_delivery_melted, x='納品月', y='合計値', color='指標',
+            df_delivery_melted, x='月', y='合計値', color='指標',
             title="納品ベース 売上・粗利", markers=True,
             template="plotly_white", color_discrete_map={'売上（税抜）': '#636EFA', '粗利（税抜）': '#f472b6'}
         )
-        # --- グラフUI修正 ---
         fig_delivery.update_layout(
-            xaxis_title="納品月",
-            yaxis_title="合計金額",
-            title_font_size=22,
-            xaxis_tickformat='%Y-%m',
-            yaxis_tickformat=',.0f'
+            xaxis_title="納品月", yaxis_title="合計金額", title_font_size=22,
+            xaxis_tickformat='%Y-%m', yaxis_tickformat=',.0f'
         )
-        fig_delivery.update_yaxes(rangemode="tozero") # Y軸の最小値を0に固定
+        fig_delivery.update_yaxes(rangemode="tozero")
         st.plotly_chart(fig_delivery, use_container_width=True)
     else:
         st.info(f"{selected_period}の納品データはありません。")
-
 
 except Exception as e:
     st.error(f"データの読み込み中または処理中にエラーが発生しました: {e}")
