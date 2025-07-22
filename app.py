@@ -3,6 +3,16 @@ import gspread
 import pandas as pd
 import plotly.express as px
 
+st.subheader("デバッグ情報")
+try:
+    creds_from_secrets = st.secrets["gcp_service_account"]
+    st.write("✅ Secretsの読み込みに成功しました。")
+    st.write("情報の型:", type(creds_from_secrets))
+    st.write("キーの一覧:", creds_from_secrets.keys())
+except Exception as e:
+    st.write("🚨 Secretsの読み込みに失敗しました。")
+    st.error(e)
+
 # カスタムCSS（全体フォント・サイドバーのモダン化）
 st.markdown(
     """
