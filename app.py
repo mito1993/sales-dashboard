@@ -80,9 +80,12 @@ def load_and_process_data(sheet_name: str) -> pd.DataFrame:
     df["納品月"] = pd.to_datetime(df["納品月"], errors="coerce")
 
     # 金額と粗利を数値に変換
-    df["金額"] = pd.to_numeric(df["金額"], errors='coerce').fillna(0)
-    # TODO: スプレッドシートの粗利の列名を正確に入力してください
-    df["粗利"] = pd.to_numeric(df["粗利"], errors='coerce').fillna(0)
+    # '¥'と','を取り除いてから数値に変換する
+    currency_columns = ['売上（税抜）', '粗利（税抜）']
+    for col in currency_columns:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.replace('[¥,]', '', regex=True)
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
     # 受注期と納品期をそれぞれ動的に生成
     df["受注期"] = df["受注月"].apply(get_fiscal_period)
@@ -116,9 +119,8 @@ try:
     selected_period = st.sidebar.selectbox("営業期を選択", all_periods, index=latest_period_index)
     
     # --- 担当営業の列名を指定 ---
-    # TODO: お客様のスプレッドシートで、営業担当者名が入っている列名を正確に入力してください。
-    sales_col_1 = '担当営業A' 
-    sales_col_2 = '担当営業B' 
+    sales_col_1 = '担当者' 
+    sales_col_2 = '営業担当' 
     # --- ▲▲▲ ここまで ▲▲▲ ---
 
     # グラフ描画
@@ -133,13 +135,13 @@ try:
     ]
 
     if not df_order_filtered.empty:
-        df_order_grouped = df_order_filtered.set_index('受注月').groupby(pd.Grouper(freq='M'))[['金額', '粗利']].sum().reset_index()
-        df_order_melted = df_order_grouped.melt(id_vars='受注月', value_vars=['金額', '粗利'], var_name='指標', value_name='合計値')
+        df_order_grouped = df_order_filtered.set_index('受注月').groupby(pd.Grouper(freq='M'))[['売上（税抜）', '粗利（税抜）']].sum().reset_index()
+        df_order_melted = df_order_grouped.melt(id_vars='受注月', value_vars=['売上（税抜）', '粗利（税抜）'], var_name='指標', value_name='合計値')
         
         fig_order = px.bar(
             df_order_melted, x='受注月', y='合計値', color='指標',
             barmode='group', title="受注ベース 売上・粗利",
-            template="plotly_white", color_discrete_map={'金額': '#3b82f6', '粗利': '#2dd4bf'}
+            template="plotly_white", color_discrete_map={'売上（税抜）': '#3b82f6', '粗利（税抜）': '#2dd4bf'}
         )
         fig_order.update_layout(xaxis_title="受注月", yaxis_title="合計", title_font_size=22)
         st.plotly_chart(fig_order, use_container_width=True)
@@ -158,13 +160,13 @@ try:
     ]
 
     if not df_delivery_filtered.empty:
-        df_delivery_grouped = df_delivery_filtered.set_index('納品月').groupby(pd.Grouper(freq='M'))[['金額', '粗利']].sum().reset_index()
-        df_delivery_melted = df_delivery_grouped.melt(id_vars='納品月', value_vars=['金額', '粗利'], var_name='指標', value_name='合計値')
+        df_delivery_grouped = df_delivery_filtered.set_index('納品月').groupby(pd.Grouper(freq='M'))[['売上（税抜）', '粗利（税抜）']].sum().reset_index()
+        df_delivery_melted = df_delivery_grouped.melt(id_vars='納品月', value_vars=['売上（税抜）', '粗利（税抜）'], var_name='指標', value_name='合計値')
 
         fig_delivery = px.line(
             df_delivery_melted, x='納品月', y='合計値', color='指標',
             title="納品ベース 売上・粗利", markers=True,
-            template="plotly_white", color_discrete_map={'金額': '#636EFA', '粗利': '#f472b6'}
+            template="plotly_white", color_discrete_map={'売上（税抜）': '#636EFA', '粗利（税抜）': '#f472b6'}
         )
         fig_delivery.update_layout(xaxis_title="納品月", yaxis_title="合計", title_font_size=22)
         st.plotly_chart(fig_delivery, use_container_width=True)
@@ -178,4 +180,4 @@ except Exception as e:
             "1. Streamlit CloudのSecrets設定は正しいですか？\n"
             "2. Googleスプレッドシート名（'営業成績データ'）は正しいですか？\n"
             "3. サービスアカウントにスプレッドシートの閲覧権限が付与されていますか？\n"
-            "4. app.py内の列名（'商流', '粗利', '担当営業A', '担当営業B'など）はスプレッドシートのヘッダーと一致していますか？")
+            "4. スプレッドシートのヘッダー名（列名）は、コード内の指定と完全に一致していますか？")
