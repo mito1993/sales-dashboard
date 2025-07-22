@@ -51,13 +51,11 @@ st.markdown("""
 """)
 
 # データ取得・フィルター処理
-@st.cache_data
+@st.cache_data(ttl=600)
 def load_gsheet_to_df(sheet_name: str) -> pd.DataFrame:
-    # --- ▼▼▼ ここを修正しました ▼▼▼ ---
     # Secretsの中から [gcp_service_account] セクションを直接指定します。
     creds = st.secrets["gcp_service_account"]
     gc = gspread.service_account_from_dict(creds)
-    # --- ▲▲▲ ここまで修正 ▲▲▲ ---
     
     sh = gc.open(sheet_name)
     worksheet = sh.get_worksheet(0)
@@ -71,15 +69,32 @@ try:
     st.sidebar.header("フィルター")
     shoryu_options = df["商流"].dropna().unique().tolist()
     selected_shoryu = st.sidebar.multiselect("商流を選択", shoryu_options, default=shoryu_options)
-    sales_options = df["担当営業"].dropna().unique().tolist()
+
+    # --- ▼▼▼ 営業担当フィルターの修正箇所 ▼▼▼ ---
+    # お客様からご提示いただいたリストを直接使用して、フィルターの選択肢を作成します。
+    sales_options = [
+        "相川直輝", "佐々木亮", "高橋和大", "衛本楓河",
+        "野沢響", "室伏夕", "湯浅華", "佐々木信", "韓国"
+    ]
     selected_sales = st.sidebar.multiselect("担当営業を選択", sales_options, default=sales_options)
+    
     period_options = df["営業期"].dropna().unique().tolist()
     selected_period = st.sidebar.selectbox("営業期を選択", period_options, index=0)
+
+    # --- フィルタリングロジックの修正 ---
+    # TODO: お客様のスプレッドシートで、営業担当者名が入っている列名（2つ）を
+    #       以下の '担当営業A', '担当営業B' の部分に正確に入力してください。
+    sales_col_1 = '担当営業A' 
+    sales_col_2 = '担当営業B' 
+
+    # 担当営業A または 担当営業B のどちらかが、選択された担当者リストに含まれている行を抽出します。
     filtered_df = df[
-        df["商流"].isin(selected_shoryu) &
-        df["担当営業"].isin(selected_sales) &
+        (df["商流"].isin(selected_shoryu)) &
+        (df[sales_col_1].isin(selected_sales) | df[sales_col_2].isin(selected_sales)) &
         (df["営業期"] == selected_period)
     ]
+    # --- ▲▲▲ ここまで修正 ▲▲▲ ---
+
 
     st.dataframe(filtered_df)
 
@@ -135,8 +150,9 @@ try:
         st.plotly_chart(fig_delivery, use_container_width=True)
 
 except Exception as e:
-    st.error(f"データの読み込み中にエラーが発生しました: {e}")
+    st.error(f"データの読み込み中または処理中にエラーが発生しました: {e}")
     st.info("以下の点をご確認ください：\n"
             "1. Streamlit CloudのSecrets設定は正しいですか？\n"
             "2. Googleスプレッドシート名（'営業成績データ'）は正しいですか？\n"
-            "3. サービスアカウントにスプレッドシートの閲覧権限が付与されていますか？")
+            "3. サービスアカウントにスプレッドシートの閲覧権限が付与されていますか？\n"
+            "4. app.py内の列名（'商流', '営業期', '担当営業A', '担当営業B'など）はスプレッドシートのヘッダーと一致していますか？")
